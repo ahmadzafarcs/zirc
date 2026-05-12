@@ -50,47 +50,53 @@ fn csv_parser(
 
     let mut row_tray: Vec<Field> = Vec::with_capacity(20);
     let mut in_quotes = false;
+    let mut leftover = Vec::new();
 
-    loop {
-        let buff = reader.fill_buf()?;
-        let length = buff.len();
-        if length == 0 {
-            break;
-        }
+    loop {  
+        let raw_buff = reader.fill_buf()?;
+        let raw_len = raw_buff.len();
+        if raw_len == 0 { break; }
 
-        let mut start = 0;
-        let mut i = 0;
+        let mut working_block = leftover;
+        working_block.extend_from_slice(raw_buff);
+        leftover = Vec::new(); 
+ 
+        if let Some(last_nl) = working_block.iter().rposition(|&b| b == 10) {
+            let (to_process, remaining) = working_block.split_at(last_nl + 1);
 
-        while i < length {
-            match buff[i] {
-                34 => {
-                    if i + 1 < length && buff[i + 1] == 34 {
-                        i += 1; // Skip the second quote
-                    } else {
-                        in_quotes = !in_quotes;
+            let mut start = 0;
+            let mut i = 0;
+            let process_len = to_process.len();  
+
+            while i < process_len {
+                match to_process[i] {
+                    34 => {
+                        if i + 1 < process_len && to_process[i + 1] == 34 {
+                            i += 1; 
+                        } else {
+                            in_quotes = !in_quotes;
+                        }
                     }
+                    44 if !in_quotes => {
+                        row_tray.push(Field { s: start, e: i });
+                        start = i + 1;
+                    }
+                    10 if !in_quotes => {
+                        row_tray.push(Field { s: start, e: i }); 
+                        process_row(to_process, &row_tray, target_col, query);
+                        row_tray.clear();
+                        start = i + 1;
+                    }
+                    _ => {}
                 }
-                // Delimiter Logic
-                44 if !in_quotes => {
-                    row_tray.push(Field { s: start, e: i });
-                    start = i + 1;
-                }
-                // Newline Logic
-                10 if !in_quotes => {
-                    row_tray.push(Field { s: start, e: i });
-
-                    process_row(buff, &row_tray, target_col, query);
-
-                    row_tray.clear();
-                    start = i + 1;
-                }
-                _ => {}
-            }
-            i += 1;
+                i += 1;
+            } 
+            leftover.extend_from_slice(remaining);
+        } else { 
+            leftover = working_block;
         }
-
-        let consumed = length;
-        reader.consume(consumed);
+ 
+        reader.consume(raw_len);
     }
     Ok(())
 }
